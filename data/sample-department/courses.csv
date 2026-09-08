@@ -1,0 +1,19 @@
+code,name,division,faculty,lectures,labs
+AI-CE-A,Artificial Intelligence,D1,F1,3,1
+DBMS-CE-A,Database Management Systems,D1,F2,3,1
+CN-CE-A,Computer Networks,D1,F3,3,0
+OS-CE-A,Operating Systems,D1,F4,3,0
+SE-CE-A,Software Engineering,D1,F5,3,0
+TOC-CE-A,Theory of Computation,D1,F6,3,0
+AI-CE-B,Artificial Intelligence,D2,F1,3,1
+DBMS-CE-B,Database Management Systems,D2,F2,3,1
+CN-CE-B,Computer Networks,D2,F3,3,0
+OS-CE-B,Operating Systems,D2,F4,3,0
+SE-CE-B,Software Engineering,D2,F5,3,0
+TOC-CE-B,Theory of Computation,D2,F6,3,0
+AI-CE-C,Artificial Intelligence,D3,F1,3,1
+DBMS-CE-C,Database Management Systems,D3,F2,3,1
+CN-CE-C,Computer Networks,D3,F3,3,0
+OS-CE-C,Operating Systems,D3,F4,3,0
+SE-CE-C,Software Engineering,D3,F5,3,0
+TOC-CE-C,Theory of Computation,D3,F6,3,0

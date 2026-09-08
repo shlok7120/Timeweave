@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TimeWeave — automated timetable generation</title>
+<style>
+  :root {
+    --surface: #fcfcfb;
+    --panel: #ffffff;
+    --ink: #0b0b0b;
+    --ink-soft: #52514e;
+    --line: #dcdcd6;
+    --brand: #c0392b;
+    --brand-soft: #fbf1f0;
+    --lecture: #2a78d6;
+    --lab: #1baf7a;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface); color: var(--ink);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    background: var(--brand); color: #fff; padding: 18px 26px;
+  }
+  header h1 { margin: 0; font-size: 20px; letter-spacing: .2px; }
+  header p { margin: 4px 0 0; font-size: 13px; opacity: .9; }
+  main { padding: 22px 26px 60px; max-width: 1400px; margin: 0 auto; }
+  .controls {
+    display: flex; flex-wrap: wrap; gap: 14px; align-items: flex-end;
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 18px;
+  }
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em;
+                 color: var(--ink-soft); }
+  select, input[type=number] {
+    font: inherit; padding: 7px 9px; border: 1px solid var(--line);
+    border-radius: 7px; background: #fff; color: var(--ink); min-width: 150px;
+  }
+  button {
+    font: inherit; font-weight: 600; padding: 9px 18px; border: 0;
+    border-radius: 7px; background: var(--brand); color: #fff; cursor: pointer;
+  }
+  button.secondary { background: #fff; color: var(--brand); border: 1px solid var(--brand); }
+  button:disabled { opacity: .55; cursor: progress; }
+  .layout { display: grid; grid-template-columns: minmax(0,1fr) 320px; gap: 18px; }
+  @media (max-width: 1050px) { .layout { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: var(--radius); padding: 16px; margin-bottom: 16px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 14px; text-transform: uppercase;
+             letter-spacing: .07em; color: var(--ink-soft); }
+  .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .tabs button { background: #fff; color: var(--ink-soft); border: 1px solid var(--line);
+                 padding: 6px 14px; font-weight: 500; }
+  .tabs button[aria-pressed=true] { background: var(--brand-soft); color: var(--brand);
+                                    border-color: var(--brand); font-weight: 600; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { border: 1px solid var(--line); padding: 6px 7px; vertical-align: top; }
+  th { background: #f6f6f3; font-weight: 600; color: var(--ink-soft);
+       font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+  td.slot { height: 50px; }
+  td.lunch { background: #f6f6f3; color: var(--ink-soft); text-align: center;
+             font-style: italic; }
+  .chip { display: block; border-radius: 6px; padding: 4px 6px; color: #fff;
+          font-weight: 600; font-size: 12px; }
+  .chip small { display: block; font-weight: 400; opacity: .92; font-size: 11px; }
+  .chip.lecture { background: var(--lecture); }
+  .chip.lab { background: var(--lab); }
+  .stats { font-size: 13px; }
+  .stats div { display: flex; justify-content: space-between; gap: 10px;
+               padding: 4px 0; border-bottom: 1px dashed var(--line); }
+  .stats div:last-child { border-bottom: 0; }
+  .stats span:last-child { font-variant-numeric: tabular-nums; font-weight: 600; }
+  pre { white-space: pre-wrap; font: 12px/1.45 ui-monospace, "SF Mono", Menlo, monospace;
+        background: #f6f6f3; padding: 12px; border-radius: 8px; overflow-x: auto;
+        margin: 0; }
+  .ok { color: #1b7f4d; font-weight: 600; }
+  .bad { color: var(--brand); font-weight: 600; }
+  .muted { color: var(--ink-soft); font-size: 12.5px; }
+  .legend { display: flex; gap: 14px; font-size: 12px; color: var(--ink-soft);
+            margin-bottom: 10px; align-items: center; }
+  .swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block;
+            margin-right: 5px; vertical-align: -1px; }
+  .playerbar { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .playerbar input[type=range] { flex: 1; accent-color: var(--brand); }
+  .playerbar button { padding: 5px 14px; font-size: 13px; }
+  .event { margin: 0 0 10px; font: 12.5px/1.5 ui-monospace, "SF Mono", Menlo, monospace;
+           color: var(--ink-soft); min-height: 20px; }
+  .event b { color: var(--brand); font-weight: 600; }
+  .chip.placing { outline: 3px solid #eda100; outline-offset: -3px; }
+  .chip.ghost { opacity: .45; }
+  td.pruned { background: #fdf4e3; }
+</style>
+</head>
+<body>
+<header>
+  <h1>TimeWeave</h1>
+  <p>Automated examination and lecture timetable generation using constraint satisfaction and local search</p>
+</header>
+
+<main>
+  <div class="controls">
+    <div class="field">
+      <label for="divisions">Divisions</label>
+      <select id="divisions">
+        <option>1</option><option>2</option><option selected>3</option>
+        <option>4</option><option>5</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="seed">Instance seed</label>
+      <input type="number" id="seed" value="0" min="0" max="99">
+    </div>
+    <div class="field">
+      <label for="solver">Solving strategy</label>
+      <select id="solver">
+        <option value="naive">Naive backtracking</option>
+        <option value="heuristics">BT + MRV / Degree / LCV</option>
+        <option value="fc" selected>BT + forward checking</option>
+        <option value="mac">BT + AC-3 (MAC)</option>
+        <option value="cbj">BT + conflict-directed backjumping</option>
+        <option value="minconflicts">Min-conflicts local search</option>
+        <option value="genetic">Genetic algorithm</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="optimise">Soft optimiser</label>
+      <select id="optimise">
+        <option value="1" selected>Run after solving</option>
+        <option value="0">Skip</option>
+      </select>
+    </div>
+    <button id="run">Generate timetable</button>
+    <button id="watch" class="secondary">Watch the search</button>
+    <div class="field">
+      <label for="speed">Animation speed</label>
+      <select id="speed">
+        <option value="240">Slow</option>
+        <option value="90" selected>Normal</option>
+        <option value="25">Fast</option>
+        <option value="4">Very fast</option>
+      </select>
+    </div>
+    <button id="explain" class="secondary">Show infeasible example</button>
+    <button id="learn" class="secondary">Learn preferences (ID3)</button>
+  </div>
+
+  <div class="layout">
+    <div>
+      <div class="card">
+        <h2>Timetable</h2>
+        <div class="legend">
+          <span><i class="swatch" style="background:var(--lecture)"></i>Lecture</span>
+          <span><i class="swatch" style="background:var(--lab)"></i>Laboratory</span>
+          <span class="muted">Click any placed session to ask the rule base why a slot is or is not allowed.</span>
+        </div>
+        <div class="tabs" id="tabs"></div>
+        <div id="player" hidden>
+          <div class="playerbar">
+            <button id="playpause" class="secondary">Pause</button>
+            <input type="range" id="scrub" min="0" value="0" step="1">
+            <span class="muted" id="counter">0 / 0</span>
+          </div>
+          <p class="event" id="eventline">&nbsp;</p>
+        </div>
+        <div id="grid"><p class="muted">Choose an instance and press <strong>Generate timetable</strong>.</p></div>
+      </div>
+      <div class="card" id="outputCard" hidden>
+        <h2>Output</h2>
+        <pre id="output"></pre>
+      </div>
+    </div>
+
+    <div>
+      <div class="card">
+        <h2>Instance</h2>
+        <p class="muted" id="instance">—</p>
+      </div>
+      <div class="card">
+        <h2>Run statistics</h2>
+        <div class="stats" id="stats"><p class="muted">No run yet.</p></div>
+      </div>
+      <div class="card">
+        <h2>Soft-constraint penalty</h2>
+        <div class="stats" id="penalty"><p class="muted">No run yet.</p></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let current = null, activeDivision = null;
+
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                             body: JSON.stringify(body)});
+  return r.json();
+}
+
+async function loadInstance() {
+  const q = `divisions=${$('divisions').value}&seed=${$('seed').value}`;
+  const info = await fetch('/api/instance?' + q).then(r => r.json());
+  $('instance').textContent = info.summary + ' — ' + info.csp;
+}
+
+function renderTabs(timetable) {
+  const tabs = $('tabs');
+  tabs.innerHTML = '';
+  timetable.divisions.forEach(d => {
+    const b = document.createElement('button');
+    b.textContent = d.name;
+    b.setAttribute('aria-pressed', String(d.id === activeDivision));
+    b.onclick = () => { activeDivision = d.id; renderTabs(timetable); renderGrid(timetable); };
+    tabs.appendChild(b);
+  });
+}
+
+function renderGrid(t, opts) {
+  opts = opts || {};
+  const cells = {};
+  t.sessions.filter(s => s.division === activeDivision).forEach(s => {
+    for (let q = 0; q < s.length; q++) cells[`${s.day}:${s.period + q}`] = {s, first: q === 0};
+  });
+  let html = '<table><thead><tr><th>Period</th>' +
+    t.days.map(d => `<th>${d}</th>`).join('') + '</tr></thead><tbody>';
+  t.periods.forEach((label, p) => {
+    html += `<tr><th>${label}</th>`;
+    t.days.forEach((_, d) => {
+      if (p === t.lunch) { html += '<td class="lunch">lunch</td>'; return; }
+      const hit = cells[`${d}:${p}`];
+      if (!hit) { html += '<td class="slot"></td>'; return; }
+      const {s, first} = hit;
+      const code = s.course.split('-')[0];
+      const flag = (opts.highlight === s.id) ? ' placing' : '';
+      html += `<td class="slot"><span class="chip ${s.kind}${flag}" data-session="${s.id}"
+        data-day="${d}" data-period="${p}" title="click to ask the rule base">
+        ${code}${s.kind === 'lab' ? ' LAB' : ''}${first ? '' : ' (cont.)'}
+        <small>${s.room} · ${s.facultyName || ''}</small></span></td>`;
+    });
+    html += '</tr>';
+  });
+  $('grid').innerHTML = html + '</tbody></table>';
+  document.querySelectorAll('.chip').forEach(el => el.onclick = () => askWhy(el));
+}
+
+async function askWhy(el) {
+  // Ask about the *lunch* slot on the same day — a slot the rules always block —
+  // so the explanation facility has something to explain.
+  const res = await post('/api/why', {
+    divisions: +$('divisions').value, seed: +$('seed').value,
+    session: el.dataset.session, day: +el.dataset.day,
+    period: current.timetable.lunch, room: 0});
+  show(`Rule base — ${el.dataset.session} at lunch on ${current.timetable.days[el.dataset.day]}:\n` +
+       (res.allowed ? '  allowed' : res.reasons.map(r => '  ' + r).join('\n')) +
+       `\n\n${res.rules}`);
+}
+
+function show(text) { $('outputCard').hidden = false; $('output').textContent = text; }
+
+function renderStats(data) {
+  const st = data.stats;
+  const rows = [
+    ['Strategy', data.solver],
+    ['Solved', data.solved ? 'yes' : 'no'],
+    ['Hard-constraint audit', data.solved ?
+      (data.violations.length === 0 ? 'passed' : data.violations.length + ' violations') : '—'],
+    ['Nodes / steps', st.nodes.toLocaleString()],
+    ['Constraint checks', st.checks.toLocaleString()],
+    ['Time', st.seconds + ' s'],
+    ['Timed out', st.timed_out ? 'yes' : 'no'],
+  ];
+  if (data.optimiser) {
+    rows.push(['Penalty before optimiser', Math.round(data.optimiser.penalty_before)]);
+    rows.push(['Penalty after optimiser', Math.round(data.optimiser.penalty)]);
+  }
+  $('stats').innerHTML = rows.map(([k, v]) =>
+    `<div><span>${k}</span><span class="${k === 'Hard-constraint audit' ?
+      (v === 'passed' ? 'ok' : 'bad') : ''}">${v}</span></div>`).join('');
+}
+
+function renderPenalty(data) {
+  if (!data.penalty) { $('penalty').innerHTML = '<p class="muted">—</p>'; return; }
+  const names = {S1_gaps: 'S1 gaps in the day', S2_consecutive: 'S2 long lecture runs',
+                 S3_lab_afternoon: 'S3 labs before noon', S4_faculty_balance: 'S4 faculty imbalance',
+                 S5_last_period: 'S5 repeated last period'};
+  $('penalty').innerHTML = Object.entries(data.penalty).map(([k, v]) =>
+    `<div><span>${names[k] || k}</span><span>${v}</span></div>`).join('') +
+    `<div><span><strong>weighted total</strong></span><span>${Math.round(data.penaltyTotal)}</span></div>`;
+}
+
+$('run').onclick = async () => {
+  const btn = $('run'); btn.disabled = true; btn.textContent = 'Solving…';
+  if (typeof stopPlayer === 'function') stopPlayer();
+  $('player').hidden = true;
+  try {
+    const data = await post('/api/solve', {
+      divisions: +$('divisions').value, seed: +$('seed').value,
+      solver: $('solver').value, optimise: $('optimise').value === '1'});
+    current = data;
+    renderStats(data);
+    if (!data.solved) {
+      $('grid').innerHTML = '<p class="bad">No timetable found within the budget.</p>';
+      $('penalty').innerHTML = '<p class="muted">—</p>';
+      show(data.explanation || 'The search hit its budget before finding a timetable.');
+    } else {
+      activeDivision = data.timetable.divisions[0].id;
+      renderTabs(data.timetable);
+      renderGrid(data.timetable);
+      renderPenalty(data);
+      $('outputCard').hidden = true;
+    }
+  } finally { btn.disabled = false; btn.textContent = 'Generate timetable'; }
+};
+
+// --------------------------------------------------------------------------
+// Search animation: replay the solver's own trace into the grid
+// --------------------------------------------------------------------------
+let player = null;
+
+function frameFromTrace(tr, upto) {
+  const placed = new Map();
+  let last = null, pruned = 0, deadends = 0, undos = 0;
+  for (let k = 0; k <= upto && k < tr.events.length; k++) {
+    const e = tr.events[k];
+    if (e.t === 'assign' || e.t === 'repair') { placed.set(e.var, e.value); last = e; }
+    else if (e.t === 'undo') { placed.delete(e.var); undos++; last = e; }
+    else if (e.t === 'prune') { pruned += e.count; last = e; }
+    else if (e.t === 'deadend') { deadends++; last = e; }
+    else last = e;
+  }
+  return {placed, last, pruned, deadends, undos};
+}
+
+function describeEvent(tr, e, frame) {
+  if (!e) return '&nbsp;';
+  const v = (i) => tr.variables[i] ? tr.variables[i].id : '?';
+  const at = (val) => `${tr.days[val[0]]} ${tr.periods[val[1]].slice(0, 5)} in ${tr.rooms[val[2]]}`;
+  switch (e.t) {
+    case 'start': return `<b>start</b> — ${tr.solver}, ${tr.variables.length} sessions to place`;
+    case 'preprocess': return `<b>AC-3 preprocessing</b> removed ${e.removed} values before search began`;
+    case 'assign': return `<b>assign</b> ${v(e.var)} → ${at(e.value)} · depth ${e.depth}/${tr.variables.length} · ${e.remaining} values were left in its domain`;
+    case 'prune': return e.wipeout
+        ? `<b>wipe-out</b> — propagating that choice emptied a domain, so it cannot work`
+        : `<b>propagate</b> — removed ${e.count} values from ${e.vars.length} neighbouring sessions`;
+    case 'undo': return `<b>undo</b> ${v(e.var)} — that branch failed, taking the value back`;
+    case 'deadend': return `<b>dead end</b> at ${v(e.var)} — every value tried, backtracking`;
+    case 'repair': return `<b>repair</b> ${v(e.var)} → ${at(e.value)} · ${e.conflicts} sessions still in conflict (this one went ${e.was} → ${e.now})`;
+    case 'generation': return `<b>generation ${e.gen}</b> — best fitness ${e.best}, ${e.hard} hard violations remaining`;
+    default: return e.t;
+  }
+}
+
+function drawFrame(tr, idx) {
+  const frame = frameFromTrace(tr, idx);
+  const sessions = [];
+  frame.placed.forEach((val, i) => {
+    const meta = tr.variables[i];
+    sessions.push({id: meta.id, course: meta.course, division: meta.division,
+                   kind: meta.kind, length: meta.length, day: val[0], period: val[1],
+                   room: tr.rooms[val[2]], facultyName: meta.faculty});
+  });
+  const highlight = frame.last && frame.last.var !== undefined && tr.variables[frame.last.var]
+                    ? tr.variables[frame.last.var].id : null;
+  renderGrid({days: tr.days, periods: tr.periods, lunch: tr.lunch, sessions}, {highlight});
+  $('eventline').innerHTML = describeEvent(tr, frame.last, frame);
+  $('counter').textContent = `${idx + 1} / ${tr.events.length}`;
+  $('scrub').value = idx;
+  const st = {stats: tr.stats, solved: tr.solved, solver: tr.solver,
+              violations: [], penalty: null};
+  return frame;
+}
+
+function stopPlayer() {
+  if (player) { clearInterval(player.timer); player = null; }
+  $('playpause').textContent = 'Play';
+}
+
+$('watch').onclick = async () => {
+  const btn = $('watch'); btn.disabled = true; btn.textContent = 'Tracing…';
+  stopPlayer();
+  try {
+    const tr = await post('/api/trace', {
+      divisions: +$('divisions').value, seed: +$('seed').value,
+      solver: $('solver').value, limit: 6000});
+    if (!tr.events.length) { show('The search produced no events to replay.'); return; }
+    activeDivision = tr.divisions[0].id;
+    renderTabs({divisions: tr.divisions});
+    document.querySelectorAll('#tabs button').forEach((b, i) => {
+      b.onclick = () => { activeDivision = tr.divisions[i].id;
+                          renderTabs({divisions: tr.divisions});
+                          document.querySelectorAll('#tabs button').forEach((x, j) =>
+                            x.setAttribute('aria-pressed', String(j === i)));
+                          drawFrame(tr, +$('scrub').value); };
+    });
+    $('player').hidden = false;
+    $('scrub').max = tr.events.length - 1;
+    $('scrub').value = 0;
+    $('scrub').oninput = () => { stopPlayer(); drawFrame(tr, +$('scrub').value); };
+    drawFrame(tr, 0);
+    show(`${tr.solver} — ${tr.events.length} search events` +
+         (tr.truncated ? ' (trace truncated at the recording limit)' : '') +
+         `\nsolved: ${tr.solved} · nodes ${tr.stats.nodes} · ${tr.stats.seconds}s`);
+
+    const startPlaying = () => {
+      const step = () => {
+        let i = +$('scrub').value;
+        if (i >= tr.events.length - 1) { stopPlayer(); return; }
+        drawFrame(tr, i + 1);
+      };
+      player = {timer: setInterval(step, +$('speed').value)};
+      $('playpause').textContent = 'Pause';
+    };
+    $('playpause').onclick = () => { if (player) stopPlayer(); else startPlaying(); };
+    $('speed').onchange = () => { if (player) { stopPlayer(); startPlaying(); } };
+    startPlaying();
+  } finally { btn.disabled = false; btn.textContent = 'Watch the search'; }
+};
+
+$('explain').onclick = async () => {
+  const r = await fetch('/api/infeasible').then(r => r.json());
+  show(r.instance + '\n\n' + r.text + `\n\n(${r.oracleCalls} feasibility calls)`);
+};
+
+$('learn').onclick = async () => {
+  const btn = $('learn'); btn.disabled = true;
+  try {
+    const r = await post('/api/learn', {divisions: +$('divisions').value, seed: +$('seed').value});
+    show(r.error || r.text);
+  } finally { btn.disabled = false; }
+};
+
+['divisions', 'seed'].forEach(id => $(id).onchange = loadInstance);
+loadInstance();
+</script>
+</body>
+</html>

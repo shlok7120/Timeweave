@@ -1,0 +1,11 @@
+solver                                       solved        nodes        checks   time (s)   penalty
+----------------------------------------------------------------------------------------------------
+1. Naive backtracking                        29/50       106,628     1,194,810      0.366      85.6
+2. BT + MRV / Degree / LCV                   49/50         2,026        65,905      0.237     104.2
+3. BT + forward checking                     50/50            60       125,639      0.053     104.4
+4. BT + AC-3 (MAC)                           50/50           189       616,454      0.288     105.4
+5. BT + conflict-directed backjumping        50/50           191         5,474      0.011     104.0
+Min-conflicts local search                   50/50            47       489,536      0.115     104.7
+Genetic algorithm                            31/50            82     6,622,890      2.160      62.7
+
+independently re-checked: 309 valid timetables, 0 solver claims rejected by the audit
