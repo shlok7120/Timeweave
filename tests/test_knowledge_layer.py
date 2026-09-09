@@ -149,3 +149,58 @@ def test_weights_fall_back_to_defaults_for_a_stump():
     w = learned_weights(leaf)
     assert set(w) == {"S1_gaps", "S2_consecutive", "S3_lab_afternoon",
                       "S4_faculty_balance", "S5_last_period"}
+
+
+# --------------------------------------------------------------------------- #
+# Validation of user-entered departments
+# --------------------------------------------------------------------------- #
+
+def test_starter_department_is_clean_and_solvable():
+    from timeweave.instances import starter_department
+    from timeweave.validate import validate as validate_inst
+    inst = starter_department()
+    assert validate_inst(inst) == []
+    csp = CSP(inst)
+    res = BacktrackingSolver(ordering="mrv", inference="fc").solve(csp, Budget(seconds=20))
+    assert res.stats.solved
+
+
+def test_json_round_trip_preserves_the_instance():
+    from timeweave.instances import from_dict, starter_department, to_dict
+    inst = starter_department()
+    back = from_dict(to_dict(inst))
+    assert [c.code for c in back.courses] == [c.code for c in inst.courses]
+    assert {f.id: f.unavailable for f in back.faculty} == \
+           {f.id: f.unavailable for f in inst.faculty}
+    assert len(CSP(back).variables) == len(CSP(inst).variables)
+
+
+def test_validation_catches_what_a_user_typing_data_gets_wrong():
+    from timeweave.instances import from_dict, starter_department, to_dict
+    from timeweave.validate import validate as validate_inst
+
+    dep = to_dict(starter_department())
+
+    dangling = {**dep, "courses": [{**dep["courses"][0], "faculty": "F99"}]}
+    msgs = [p.message for p in validate_inst(from_dict(dangling))]
+    assert any("F99" in m for m in msgs)
+
+    dupes = {**dep, "divisions": dep["divisions"] + [dep["divisions"][0]]}
+    assert any("appears 2 times" in p.message for p in validate_inst(from_dict(dupes)))
+
+    no_lab = {**dep, "rooms": [r for r in dep["rooms"] if not r["isLab"]]}
+    problems = validate_inst(from_dict(no_lab))
+    assert any("laboratory" in p.message and p.severity == "error" for p in problems)
+
+    tiny = {**dep, "rooms": [{**r, "capacity": 5} for r in dep["rooms"]]}
+    assert any(p.severity == "error" for p in validate_inst(from_dict(tiny)))
+
+
+def test_validation_separates_impossible_from_inconsistent():
+    """A department can be perfectly well-formed and still have no timetable."""
+    from timeweave.instances import infeasible_example
+    from timeweave.validate import validate as validate_inst
+    problems = validate_inst(infeasible_example(seed=2))
+    assert problems
+    assert all(p.severity == "warning" for p in problems), \
+        "over-constrained data is impossible, not malformed"

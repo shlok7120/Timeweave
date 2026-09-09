@@ -21,7 +21,8 @@ python scripts/demo.py              # a full tour: solve, explain, learn, optimi
 python scripts/run_benchmark.py     # the results table and charts
 python scripts/calibrate.py         # how the instance difficulty was chosen
 python scripts/make_report.py       # regenerate the report from the results
-python -m pytest tests -q           # 31 tests
+python scripts/import_csv.py data/sample-department --solve
+python -m pytest tests -q           # 35 tests
 python app.py                       # web interface on http://127.0.0.1:5000
 ```
 
@@ -192,9 +193,20 @@ prose moves with it.
 
 ## The interface
 
+![Entering a department](docs/screenshot-editor.png)
+
+The **Department** tab is a full editor — add your own classes, teachers, subjects and rooms,
+set how many lectures and labs each subject needs a week, and tick which classes take it. A
+teacher's unavailability is a clickable week grid rather than a text field. Everything is
+checked as you type: `timeweave/validate.py` separates *errors* (a subject points at a teacher
+who does not exist, no laboratory is big enough for a class) from *warnings* (the data is
+consistent but no timetable can exist), and the generate button stays disabled while errors
+remain. The department is kept in browser storage, and **Export CSV** hands it back as the four
+files the command-line tools read.
+
 ![The generated timetable](docs/screenshot-timetable.png)
 
-Pick a size, a seed and a strategy; the grid shows one division at a time with laboratory
+The **Timetable** tab shows one class at a time with laboratory
 sessions spanning their two periods. The right-hand column reports the run — including the
 **hard-constraint audit**, which re-checks the returned timetable independently of the search
 that produced it — and the soft penalty broken down by constraint. Clicking a session asks the
@@ -239,10 +251,11 @@ timeweave/
   instances.py     generator, difficulty calibration, CSV import/export
   benchmark.py     the harness and the charts
   render.py        text and JSON views of a timetable
+  validate.py      checks a real department's data before the solver sees it
 app.py             Flask API
 web/index.html     the interface
-scripts/           demo.py, run_benchmark.py, calibrate.py, make_report.py
-tests/             31 tests
+scripts/           demo.py, run_benchmark.py, calibrate.py, make_report.py, import_csv.py
+tests/             35 tests
 results/           benchmark.csv, summary.txt, four charts
 docs/              the project report, diagrams, interface screenshots
 ```
@@ -259,6 +272,9 @@ The suite does not check that the solvers ran; it checks that what they produced
 * QuickXplain's conflict set must be sufficient *and* every member necessary.
 * ID3 must recover a known two-feature policy exactly, and generalise to held-out data.
 * Solving must not mutate the CSP — a bug that would silently corrupt the benchmark.
+* A department typed into the interface must survive the JSON round trip, and the validator
+  must catch the four things users actually get wrong: a dangling teacher reference, duplicate
+  ids, no laboratory for a subject that needs one, and rooms too small for any class.
 
 ## Attribution
 

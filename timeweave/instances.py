@@ -197,3 +197,104 @@ def benchmark_instances(seed: int = 0) -> List[Instance]:
     return [generate(divisions=n, courses_per_division=6, lectures=3, labs_for=2,
                      seed=seed, name=f"{n}-division")
             for n in BENCHMARK_SIZES]
+
+
+# --------------------------------------------------------------------------- #
+# JSON  (what the web interface sends when a coordinator enters their own data)
+# --------------------------------------------------------------------------- #
+
+def from_dict(payload: dict, name: str = "custom department") -> Instance:
+    """Build an Instance from the interface's JSON.
+
+    Deliberately forgiving about types — the browser sends strings — and
+    deliberately *not* forgiving about meaning: anything inconsistent is left
+    for :func:`timeweave.validate.validate` to report in the user's own terms
+    rather than being silently repaired here.
+    """
+    def as_int(v, default=0):
+        try:
+            return int(str(v).strip())
+        except (TypeError, ValueError):
+            return default
+
+    rooms = [Room(id=str(r.get("id", "")).strip(),
+                  capacity=as_int(r.get("capacity"), 0),
+                  is_lab=bool(r.get("isLab")))
+             for r in payload.get("rooms", [])]
+
+    divisions = [Division(id=str(d.get("id", "")).strip(),
+                          name=str(d.get("name", "")).strip() or str(d.get("id", "")),
+                          strength=as_int(d.get("strength"), 0))
+                 for d in payload.get("divisions", [])]
+
+    faculty = []
+    for f in payload.get("faculty", []):
+        blocks = set()
+        for entry in f.get("unavailable", []):
+            if isinstance(entry, (list, tuple)) and len(entry) == 2:
+                blocks.add((as_int(entry[0], -1), as_int(entry[1], -1)))
+        faculty.append(Faculty(id=str(f.get("id", "")).strip(),
+                               name=str(f.get("name", "")).strip() or str(f.get("id", "")),
+                               unavailable=frozenset(blocks)))
+
+    courses = [Course(code=str(c.get("code", "")).strip(),
+                      name=str(c.get("name", "")).strip() or str(c.get("code", "")),
+                      division=str(c.get("division", "")).strip(),
+                      faculty=str(c.get("faculty", "")).strip(),
+                      lectures=as_int(c.get("lectures"), 0),
+                      labs=as_int(c.get("labs"), 0))
+               for c in payload.get("courses", [])]
+
+    return Instance(name=str(payload.get("name") or name), rooms=rooms,
+                    faculty=faculty, divisions=divisions, courses=courses)
+
+
+def to_dict(inst: Instance) -> dict:
+    """The inverse — used to seed the editor from a generated example."""
+    return {
+        "name": inst.name,
+        "rooms": [{"id": r.id, "capacity": r.capacity, "isLab": r.is_lab}
+                  for r in inst.rooms],
+        "divisions": [{"id": d.id, "name": d.name, "strength": d.strength}
+                      for d in inst.divisions],
+        "faculty": [{"id": f.id, "name": f.name,
+                     "unavailable": [list(x) for x in sorted(f.unavailable)]}
+                    for f in inst.faculty],
+        "courses": [{"code": c.code, "name": c.name, "division": c.division,
+                     "faculty": c.faculty, "lectures": c.lectures, "labs": c.labs}
+                    for c in inst.courses],
+    }
+
+
+def starter_department() -> Instance:
+    """A small, obviously-editable example so the editor is never blank.
+
+    Two classes, four subjects each, four teachers, three rooms — small enough to
+    read at a glance and solvable, so a first-time user sees a timetable before
+    they change anything.
+    """
+    divisions = [Division(id="D1", name="CE-A", strength=60),
+                 Division(id="D2", name="CE-B", strength=60)]
+    rooms = [Room(id="LH1", capacity=70, is_lab=False),
+             Room(id="LH2", capacity=70, is_lab=False),
+             Room(id="LAB1", capacity=70, is_lab=True)]
+    faculty = [
+        Faculty(id="F1", name="Anita Deshmukh",
+                unavailable=frozenset({(0, 0), (0, 1), (4, 6), (4, 7)})),
+        Faculty(id="F2", name="Rahul Iyer",
+                unavailable=frozenset({(2, 5), (2, 6), (2, 7)})),
+        Faculty(id="F3", name="Meera Kulkarni",
+                unavailable=frozenset({(1, 0), (3, 0)})),
+        Faculty(id="F4", name="Sanjay Bhatt", unavailable=frozenset({(4, 0), (4, 1)})),
+    ]
+    subjects = [("AI", "Artificial Intelligence", "F1", 3, 1),
+                ("DBMS", "Database Management Systems", "F2", 3, 1),
+                ("CN", "Computer Networks", "F3", 3, 0),
+                ("OS", "Operating Systems", "F4", 3, 0)]
+    courses = []
+    for d in divisions:
+        for code, title, fid, lec, lab in subjects:
+            courses.append(Course(code=f"{code}-{d.name}", name=title, division=d.id,
+                                  faculty=fid, lectures=lec, labs=lab))
+    return Instance(name="my department", rooms=rooms, faculty=faculty,
+                    divisions=divisions, courses=courses)

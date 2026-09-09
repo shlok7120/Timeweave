@@ -18,11 +18,14 @@ from flask import Flask, jsonify, request, send_from_directory
 from timeweave.constraints import DEFAULT_WEIGHTS, hard_violations, soft_penalty
 from timeweave.csp import CSP
 from timeweave.explain import quickxplain
-from timeweave.instances import generate, infeasible_example
+from timeweave.instances import (
+    from_dict, generate, infeasible_example, starter_department, to_dict,
+)
 from timeweave.model import DAYS, LUNCH_PERIOD, PERIOD_LABELS
 from timeweave.learning import learn_preferences
 from timeweave.render import faculty_load, to_json
 from timeweave.rules import Explainer
+from timeweave.validate import validate
 from timeweave.solvers import SOLVER_KEYS, Budget, SoftOptimiser, Trace
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -132,6 +135,171 @@ def api_trace():
         "lunch": LUNCH_PERIOD,
         "divisions": [{"id": d.id, "name": d.name} for d in csp.instance.divisions],
     })
+
+
+# --------------------------------------------------------------------------- #
+# A department the user typed in themselves
+# --------------------------------------------------------------------------- #
+
+_custom_cache: Dict[str, CSP] = {}
+
+
+def custom_csp(payload: dict) -> CSP:
+    """Cache by content, so editing one field does not rebuild everything twice."""
+    import json
+    key = json.dumps(payload, sort_keys=True)
+    if key not in _custom_cache:
+        if len(_custom_cache) > 8:
+            _custom_cache.clear()
+        _custom_cache[key] = CSP(from_dict(payload))
+    return _custom_cache[key]
+
+
+def problems_payload(inst) -> list:
+    return [{"severity": p.severity, "where": p.where, "message": p.message}
+            for p in validate(inst)]
+
+
+@app.route("/api/starter")
+def api_starter():
+    """A small, editable department so the editor is never blank."""
+    return jsonify(to_dict(starter_department()))
+
+
+@app.route("/api/example")
+def api_example():
+    """A larger generated department, for users who want something to poke at."""
+    divisions = int(request.args.get("divisions", 3))
+    seed = int(request.args.get("seed", 0))
+    return jsonify(to_dict(generate(divisions=divisions, seed=seed)))
+
+
+@app.route("/api/custom/validate", methods=["POST"])
+def api_custom_validate():
+    payload = request.get_json(force=True) or {}
+    inst = from_dict(payload)
+    problems = problems_payload(inst)
+    body = {"summary": inst.summary(), "problems": problems,
+            "errors": sum(1 for p in problems if p["severity"] == "error"),
+            "warnings": sum(1 for p in problems if p["severity"] == "warning")}
+    if not body["errors"]:
+        try:
+            body["csp"] = custom_csp(payload).describe()
+        except Exception as exc:                       # a shape we did not anticipate
+            body["problems"].append({"severity": "error", "where": "model",
+                                     "message": str(exc)})
+            body["errors"] += 1
+    return jsonify(body)
+
+
+@app.route("/api/custom/solve", methods=["POST"])
+def api_custom_solve():
+    body = request.get_json(force=True) or {}
+    payload = body.get("department") or {}
+    inst = from_dict(payload)
+    problems = problems_payload(inst)
+    if any(p["severity"] == "error" for p in problems):
+        return jsonify({"solved": False, "problems": problems,
+                        "message": "Fix the errors in the department data first."})
+
+    csp = custom_csp(payload)
+    key = body.get("solver", "fc")
+    solver = SOLVER_KEYS.get(key, SOLVER_KEYS["fc"])(0)
+    trace = Trace(max_events=int(body.get("traceLimit", 0))) if body.get("trace") else None
+    result = solver.solve(csp, Budget(seconds=float(body.get("seconds", 25))), trace=trace)
+
+    out = {"solver": solver.name, "stats": result.stats.row(), "problems": problems}
+    if result.assignment is None:
+        out["solved"] = False
+        out["explanation"] = quickxplain(inst, seconds=4.0).text()
+        return jsonify(out)
+
+    assignment = result.assignment
+    out["penaltyBefore"] = soft_penalty(csp, assignment).total
+    if body.get("optimise", True):
+        assignment, opt = SoftOptimiser(steps=3000, seed=0).improve(
+            csp, assignment, budget=Budget(seconds=8))
+        out["optimiser"] = opt.row()
+
+    out.update({
+        "solved": True,
+        "violations": hard_violations(csp, assignment),
+        "penalty": soft_penalty(csp, assignment).raw,
+        "penaltyTotal": soft_penalty(csp, assignment).total,
+        "timetable": to_json(csp, assignment),
+        "facultyLoad": faculty_load(csp, assignment),
+    })
+    if trace is not None:
+        out["trace"] = {
+            "events": trace.events, "truncated": trace.truncated,
+            "variables": [{"id": v.id, "course": v.course, "division": v.division,
+                           "faculty": v.faculty, "kind": v.kind, "length": v.length}
+                          for v in csp.variables],
+            "rooms": [r.id for r in csp.instance.rooms],
+            "days": list(DAYS), "periods": list(PERIOD_LABELS), "lunch": LUNCH_PERIOD,
+            "divisions": [{"id": d.id, "name": d.name} for d in csp.instance.divisions],
+            "solver": solver.name, "solved": result.stats.solved,
+            "stats": result.stats.row(),
+        }
+    return jsonify(out)
+
+
+@app.route("/api/custom/why", methods=["POST"])
+def api_custom_why():
+    body = request.get_json(force=True) or {}
+    inst = from_dict(body.get("department") or {})
+    ex = Explainer(inst)
+    reasons = ex.explain(body["session"],
+                         (int(body["day"]), int(body["period"]), int(body["room"])))
+    return jsonify({"allowed": not reasons, "reasons": reasons, "rules": ex.summary()})
+
+
+@app.route("/api/custom/learn", methods=["POST"])
+def api_custom_learn():
+    body = request.get_json(force=True) or {}
+    payload = body.get("department") or {}
+    inst = from_dict(payload)
+    if any(p["severity"] == "error" for p in problems_payload(inst)):
+        return jsonify({"error": "fix the department data first"}), 400
+    csp = custom_csp(payload)
+    res = SOLVER_KEYS["fc"](0).solve(csp, Budget(seconds=25))
+    if res.assignment is None:
+        return jsonify({"error": "no timetable to learn from — solve first"}), 400
+    report = learn_preferences(csp, res.assignment, n=240, seed=0)
+    return jsonify({"text": report.text(), "weights": report.weights,
+                    "defaultWeights": DEFAULT_WEIGHTS,
+                    "testAccuracy": report.test_accuracy})
+
+
+@app.route("/api/custom/csv", methods=["POST"])
+def api_custom_csv():
+    """Hand the department back as the four CSV files, for the record."""
+    import csv as _csv
+    import io
+    payload = request.get_json(force=True) or {}
+    inst = from_dict(payload)
+    files = {}
+
+    def dump(rows):
+        buf = io.StringIO()
+        w = _csv.writer(buf)
+        for r in rows:
+            w.writerow(r)
+        return buf.getvalue()
+
+    files["rooms.csv"] = dump([["id", "capacity", "is_lab"]] +
+                              [[r.id, r.capacity, int(r.is_lab)] for r in inst.rooms])
+    files["divisions.csv"] = dump([["id", "name", "strength"]] +
+                                  [[d.id, d.name, d.strength] for d in inst.divisions])
+    files["faculty.csv"] = dump(
+        [["id", "name", "unavailable"]] +
+        [[f.id, f.name, " ".join(f"{DAYS[d]}:{p}" for d, p in sorted(f.unavailable))]
+         for f in inst.faculty])
+    files["courses.csv"] = dump(
+        [["code", "name", "division", "faculty", "lectures", "labs"]] +
+        [[c.code, c.name, c.division, c.faculty, c.lectures, c.labs]
+         for c in inst.courses])
+    return jsonify(files)
 
 
 @app.route("/api/why", methods=["POST"])
