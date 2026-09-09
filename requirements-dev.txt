@@ -1,0 +1,7 @@
+# Everything the runtime needs, plus the tools used for the benchmark,
+# the charts, the report and the tests.  The deployed web app needs only
+# requirements.txt — keeping matplotlib out of it keeps the serverless
+# bundle small enough to deploy.
+-r requirements.txt
+matplotlib>=3.8
+pytest>=8.0

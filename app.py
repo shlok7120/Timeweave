@@ -31,6 +31,23 @@ from timeweave.solvers import SOLVER_KEYS, Budget, SoftOptimiser, Trace
 HERE = os.path.dirname(os.path.abspath(__file__))
 app = Flask(__name__, static_folder=None)
 
+# Vercel (and most serverless hosts) kill a request after a few seconds, so the
+# solver budgets have to be shorter there than they are on a desktop. Forward
+# checking solves a department of this size in well under a second, so the cap
+# only bites on the deliberately slow strategies — which is worth knowing, and
+# is reported back to the interface rather than hidden.
+SERVERLESS = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+MAX_SOLVE_SECONDS = 8.0 if SERVERLESS else 25.0
+MAX_EXPLAIN_SECONDS = 3.0 if SERVERLESS else 5.0
+
+
+def budget_seconds(requested) -> float:
+    try:
+        asked = float(requested)
+    except (TypeError, ValueError):
+        asked = MAX_SOLVE_SECONDS
+    return max(1.0, min(asked, MAX_SOLVE_SECONDS))
+
 _csp_cache: Dict[Tuple[int, int], CSP] = {}
 _explainer_cache: Dict[Tuple[int, int], Explainer] = {}
 
@@ -54,6 +71,16 @@ def index():
     return send_from_directory(os.path.join(HERE, "web"), "index.html")
 
 
+@app.route("/healthz")
+def healthz():
+    """A cheap endpoint that proves the deployment imported the solver."""
+    from timeweave.instances import starter_department
+    inst = starter_department()
+    return jsonify({"ok": True, "serverless": SERVERLESS,
+                    "maxSolveSeconds": MAX_SOLVE_SECONDS,
+                    "instance": inst.summary()})
+
+
 @app.route("/api/instance")
 def api_instance():
     divisions = int(request.args.get("divisions", 3))
@@ -75,7 +102,7 @@ def api_solve():
     seed = int(body.get("seed", 0))
     key = body.get("solver", "fc")
     optimise = bool(body.get("optimise", True))
-    seconds = float(body.get("seconds", 20))
+    seconds = budget_seconds(body.get("seconds", 20))
 
     csp = get_csp(divisions, seed)
     solver = SOLVER_KEYS.get(key, SOLVER_KEYS["fc"])(seed)
@@ -84,7 +111,7 @@ def api_solve():
     payload = {"solver": solver.name, "stats": result.stats.row()}
     if result.assignment is None:
         payload["solved"] = False
-        payload["explanation"] = quickxplain(csp.instance, seconds=2.0).text()
+        payload["explanation"] = quickxplain(csp.instance, seconds=MAX_EXPLAIN_SECONDS).text()
         return jsonify(payload)
 
     assignment = result.assignment
@@ -117,7 +144,8 @@ def api_trace():
     csp = get_csp(divisions, seed)
     solver = SOLVER_KEYS.get(key, SOLVER_KEYS["fc"])(seed)
     trace = Trace(max_events=limit)
-    result = solver.solve(csp, Budget(seconds=float(body.get("seconds", 20))), trace=trace)
+    result = solver.solve(csp, Budget(seconds=budget_seconds(body.get("seconds", 20))),
+                          trace=trace)
 
     return jsonify({
         "solver": solver.name,
@@ -206,12 +234,13 @@ def api_custom_solve():
     key = body.get("solver", "fc")
     solver = SOLVER_KEYS.get(key, SOLVER_KEYS["fc"])(0)
     trace = Trace(max_events=int(body.get("traceLimit", 0))) if body.get("trace") else None
-    result = solver.solve(csp, Budget(seconds=float(body.get("seconds", 25))), trace=trace)
+    result = solver.solve(csp, Budget(seconds=budget_seconds(body.get("seconds", 25))),
+                          trace=trace)
 
     out = {"solver": solver.name, "stats": result.stats.row(), "problems": problems}
     if result.assignment is None:
         out["solved"] = False
-        out["explanation"] = quickxplain(inst, seconds=4.0).text()
+        out["explanation"] = quickxplain(inst, seconds=MAX_EXPLAIN_SECONDS).text()
         return jsonify(out)
 
     assignment = result.assignment
@@ -262,7 +291,7 @@ def api_custom_learn():
     if any(p["severity"] == "error" for p in problems_payload(inst)):
         return jsonify({"error": "fix the department data first"}), 400
     csp = custom_csp(payload)
-    res = SOLVER_KEYS["fc"](0).solve(csp, Budget(seconds=25))
+    res = SOLVER_KEYS["fc"](0).solve(csp, Budget(seconds=MAX_SOLVE_SECONDS))
     if res.assignment is None:
         return jsonify({"error": "no timetable to learn from — solve first"}), 400
     report = learn_preferences(csp, res.assignment, n=240, seed=0)
@@ -317,7 +346,7 @@ def api_why():
 @app.route("/api/infeasible")
 def api_infeasible():
     inst = infeasible_example(seed=int(request.args.get("seed", 2)))
-    ex = quickxplain(inst, seconds=2.0)
+    ex = quickxplain(inst, seconds=MAX_EXPLAIN_SECONDS)
     return jsonify({
         "instance": inst.summary(),
         "text": ex.text(),
@@ -334,7 +363,7 @@ def api_learn():
     seed = int(body.get("seed", 0))
     csp = get_csp(divisions, seed)
     solver = SOLVER_KEYS["fc"](seed)
-    res = solver.solve(csp, Budget(seconds=20))
+    res = solver.solve(csp, Budget(seconds=MAX_SOLVE_SECONDS))
     if res.assignment is None:
         return jsonify({"error": "no base timetable to learn from"}), 400
     report = learn_preferences(csp, res.assignment, n=240, seed=seed)

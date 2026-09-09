@@ -15,7 +15,7 @@ Problem, solves it with seven different AI techniques, compares them on identica
 and — when no timetable exists — says exactly which constraints are fighting each other.
 
 ```
-pip install -r requirements.txt
+pip install -r requirements-dev.txt      # runtime + benchmark, charts, tests
 
 python scripts/demo.py              # a full tour: solve, explain, learn, optimise
 python scripts/run_benchmark.py     # the results table and charts
@@ -237,6 +237,21 @@ Below 0.75 the problem is close to trivial; at 0.85 the instances start being ge
 infeasible and forward checking fails too. 0.75 is the largest setting where a good solver
 still always succeeds — so that is the default, and this table is the reason.
 
+## Deploying the interface
+
+The web app is deployed on Vercel from `api/index.py` and `vercel.json`. Two things make
+that work: `requirements.txt` holds only Flask — matplotlib and pytest live in
+`requirements-dev.txt`, because a serverless bundle carrying matplotlib is both slow to
+build and close to the size limit — and the solver budgets are capped when the `VERCEL`
+environment variable is present, since a serverless function is killed after a few seconds.
+
+Forward checking solves a department of this size in well under a second, so the cap only
+bites on the deliberately slow strategies. `GET /healthz` reports which mode the deployment
+is in.
+
+For running the benchmark or generating the report, use a normal machine — those are
+minutes of CPU, not a web request.
+
 ## Layout
 
 ```
@@ -253,6 +268,8 @@ timeweave/
   render.py        text and JSON views of a timetable
   validate.py      checks a real department's data before the solver sees it
 app.py             Flask API
+api/index.py       serverless entry point (Vercel)
+vercel.json        deployment configuration
 web/index.html     the interface
 scripts/           demo.py, run_benchmark.py, calibrate.py, make_report.py, import_csv.py
 tests/             35 tests
